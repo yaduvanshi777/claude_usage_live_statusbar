@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+
+# PyInstaller
+*.spec.bak
+
+# Tests
+.pytest_cache/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log

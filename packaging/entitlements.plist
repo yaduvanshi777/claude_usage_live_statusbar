@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for claude-usage-bar.app
+
+  Required for:
+  - Keychain access (store/read Anthropic API key)
+  - Reading ~/.claude/ session files (hardened runtime still allows this; no sandbox)
+
+  NOT sandboxed — sandboxing would block ~/.claude/ reads via FSEvents without
+  explicit com.apple.security.files.user-selected.read-only entitlement and a
+  file-open dialog, which defeats the whole point of the app.
+-->
+<plist version="1.0">
+<dict>
+    <!-- Hardened runtime required for notarization -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <false/>
+
+    <!-- Keychain access -->
+    <key>keychain-access-groups</key>
+    <array>
+        <string>$(AppIdentifierPrefix)com.claude-usage-bar</string>
+    </array>
+
+    <!-- Allow reading files outside the sandbox (no sandbox = this is implicit,
+         but explicit here for documentation clarity) -->
+    <key>com.apple.security.files.user-selected.read-only</key>
+    <true/>
+</dict>
+</plist>

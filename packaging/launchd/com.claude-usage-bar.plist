@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent for auto-starting Claude Usage Bar on login.
+  Install: launchctl load ~/Library/LaunchAgents/com.claude-usage-bar.plist
+  Remove:  launchctl unload ~/Library/LaunchAgents/com.claude-usage-bar.plist
+
+  Note: Replace /usr/local/bin/claude-usage-bar with your actual install path.
+  Running `claude-usage-bar install` will generate this file with the correct path.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.claude-usage-bar</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/claude-usage-bar</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <!-- Restart on crash only. Clean quit (Quit menu item) stays quit. -->
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/REPLACE_USERNAME/.claude-usage-bar/stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/REPLACE_USERNAME/.claude-usage-bar/stderr.log</string>
+</dict>
+</plist>
