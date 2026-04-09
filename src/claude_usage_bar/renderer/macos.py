@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import sys
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -45,6 +46,21 @@ if TYPE_CHECKING:
     from claude_usage_bar.app import UsageBarApp
 
 logger = logging.getLogger(__name__)
+
+
+def _menubar_icon_path() -> str | None:
+    """
+    Locate menubar.png in both PyInstaller bundle and source-tree contexts.
+    Returns an absolute path string, or None if the file can't be found.
+    """
+    if getattr(sys, "frozen", False):
+        # PyInstaller bundle: assets are unpacked into sys._MEIPASS
+        p = Path(sys._MEIPASS) / "menubar.png"  # type: ignore[attr-defined]
+    else:
+        # Source tree: packaging/assets/menubar.png (4 levels up from this file)
+        p = Path(__file__).parent.parent.parent.parent / "packaging" / "assets" / "menubar.png"
+    return str(p) if p.exists() else None
+
 
 _BAR_FILL = "█"
 _BAR_EMPTY = "░"
@@ -75,10 +91,13 @@ class MenuBarRenderer(rumps.App):
     """
 
     def __init__(self, app: UsageBarApp) -> None:
+        icon_path = _menubar_icon_path()
         super().__init__(
             name="Claude Usage",
-            title="⬛ loading…",
-            quit_button=None,  # We add our own Quit item
+            title="loading…",
+            icon=icon_path,
+            template=True,   # macOS adapts colour to light/dark menu bar
+            quit_button=None,
         )
         self._app = app
         self._build_menu()
@@ -144,11 +163,11 @@ class MenuBarRenderer(rumps.App):
 
         # ── Title bar ───────────────────────────────────────────────
         if cfg.display.format == "cost":
-            self.title = f"⬛ {_fmt_cost(today.cost_usd)}"
+            self.title = _fmt_cost(today.cost_usd)
         elif cfg.display.format == "tokens":
-            self.title = f"⬛ {_fmt_tokens(today.total_tokens)} tok"
+            self.title = f"{_fmt_tokens(today.total_tokens)} tok"
         else:
-            self.title = f"⬛ {_fmt_cost(today.cost_usd)} | {_fmt_tokens(today.total_tokens)} tok"
+            self.title = f"{_fmt_cost(today.cost_usd)} | {_fmt_tokens(today.total_tokens)} tok"
 
         # ── Today section ───────────────────────────────────────────
         self._today_tokens.title = (

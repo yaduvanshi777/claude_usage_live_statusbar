@@ -34,8 +34,8 @@ a = Analysis(
     pathex=[str(SRC)],
     binaries=[],
     datas=[
-        # Ship the default config template so first-run write works offline
-        (str(ASSETS / "icon.icns"), "."),
+        (str(ASSETS / "icon.icns"),    "."),   # app bundle icon
+        (str(ASSETS / "menubar.png"),  "."),   # menu bar template icon
     ],
     hiddenimports=[
         "rumps",

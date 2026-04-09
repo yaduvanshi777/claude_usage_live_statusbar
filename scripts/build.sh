@@ -11,19 +11,27 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Always use the project venv — never the system python.
+PYTHON=".venv/bin/python"
+PIP=".venv/bin/pip"
+PYINSTALLER=".venv/bin/pyinstaller"
+
+if [[ ! -x "$PYTHON" ]]; then
+    echo "ERROR: .venv not found. Run: python3 -m venv .venv && $PIP install -e '.[dev]'" >&2
+    exit 1
+fi
+
 # ── 0. Determine version ──────────────────────────────────────────────────────
-VERSION=$(python3 -c "import tomllib; d=tomllib.load(open('pyproject.toml','rb')); print(d['project']['version'])")
+VERSION=$("$PYTHON" -c "import tomllib; d=tomllib.load(open('pyproject.toml','rb')); print(d['project']['version'])")
 echo "==> Building claude-usage-bar v${VERSION}"
 
-# ── 1. Generate icon if not present ───────────────────────────────────────────
-if [[ ! -f packaging/assets/icon.icns ]]; then
-    echo "==> Generating icon..."
-    python3 packaging/assets/make_icns.py
-fi
+# ── 1. Regenerate icon (always — so icon changes are never silently skipped) ──
+echo "==> Generating icon..."
+"$PYTHON" packaging/assets/make_icns.py
 
 # ── 2. Install build deps into current venv ───────────────────────────────────
 echo "==> Installing build dependencies..."
-pip install -q pyinstaller pillow
+"$PIP" install -q pyinstaller pillow
 
 # ── 3. Clean previous build ───────────────────────────────────────────────────
 rm -rf dist/claude-usage-bar dist/"Claude Usage Bar.app" build/claude-usage-bar
@@ -32,7 +40,7 @@ rm -rf dist/claude-usage-bar dist/"Claude Usage Bar.app" build/claude-usage-bar
 # Set CLAUDE_BAR_UNIVERSAL2=1 only when using a fat python.org Python install.
 # Homebrew Python is arm64-only and will fail if universal2 is forced.
 echo "==> Running PyInstaller (arch: ${CLAUDE_BAR_UNIVERSAL2:+universal2}${CLAUDE_BAR_UNIVERSAL2:-native})..."
-pyinstaller packaging/claude-usage-bar.spec \
+"$PYINSTALLER" packaging/claude-usage-bar.spec \
     --distpath dist \
     --workpath build \
     --noconfirm
@@ -124,3 +132,13 @@ echo "  SHA256: $SHA"
 echo ""
 echo "Update packaging/homebrew/formula.rb with:"
 echo "  sha256 \"${SHA}\""
+
+# ── 9. Local deploy (optional) ────────────────────────────────────────────────
+if [[ "${DEPLOY:-0}" == "1" ]]; then
+    echo "==> Installing to /Applications..."
+    cp -R "$APP" /Applications/
+    touch "/Applications/Claude Usage Bar.app"
+    killall iconservicesagent 2>/dev/null || true
+    killall Dock
+    echo "Deployed. Dock restarted."
+fi
