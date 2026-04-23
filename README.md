@@ -61,6 +61,23 @@ claude-usage-bar install
 
 ---
 
+## ⬆️ Updating
+
+```bash
+# pipx
+pipx install --force git+https://github.com/yaduvanshi777/claude_usage_live_statusbar.git
+
+# pip
+pip install --upgrade git+https://github.com/yaduvanshi777/claude_usage_live_statusbar.git
+```
+
+Then restart the app:
+```bash
+pkill -f claude_usage_bar; claude-usage-bar
+```
+
+---
+
 ## 🚀 Usage
 
 ```bash
