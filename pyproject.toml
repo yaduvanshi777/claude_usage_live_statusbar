@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "claude-usage-bar"
-version = "0.1.0"
+version = "0.2.0"
 description = "macOS menu bar app showing real-time Claude usage from local session files"
 readme = "README.md"
 requires-python = ">=3.11"
