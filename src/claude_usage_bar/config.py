@@ -11,41 +11,50 @@ from typing import Literal
 CONFIG_PATH = Path.home() / ".claude-usage-bar" / "config.toml"
 
 # Pricing as of 2026-04 — override in config.toml as models change.
+#
+# Cache write tiers (Anthropic prices these differently):
+#   cache_write_1h_per_mtok  — 1-hour extended cache, input rate + 25% premium
+#   cache_write_5m_per_mtok  — 5-minute ephemeral cache, same as input rate (no premium)
 DEFAULT_PRICING: dict[str, dict[str, float]] = {
     # Sonnet 4.6
     "claude-sonnet-4-6": {
-        "input_per_mtok": 3.00,
-        "output_per_mtok": 15.00,
-        "cache_read_per_mtok": 0.30,
-        "cache_write_per_mtok": 3.75,
+        "input_per_mtok":          3.00,
+        "output_per_mtok":        15.00,
+        "cache_read_per_mtok":     0.30,
+        "cache_write_1h_per_mtok": 3.75,   # input × 1.25
+        "cache_write_5m_per_mtok": 3.00,   # same as input
     },
-    # Sonnet 4.5 (observed in your JSONL files)
+    # Sonnet 4.5 (observed in JSONL files)
     "claude-sonnet-4-5-20250929": {
-        "input_per_mtok": 3.00,
-        "output_per_mtok": 15.00,
-        "cache_read_per_mtok": 0.30,
-        "cache_write_per_mtok": 3.75,
+        "input_per_mtok":          3.00,
+        "output_per_mtok":        15.00,
+        "cache_read_per_mtok":     0.30,
+        "cache_write_1h_per_mtok": 3.75,
+        "cache_write_5m_per_mtok": 3.00,
     },
     # Haiku 4.5
     "claude-haiku-4-5-20251001": {
-        "input_per_mtok": 0.80,
-        "output_per_mtok": 4.00,
-        "cache_read_per_mtok": 0.08,
-        "cache_write_per_mtok": 1.00,
+        "input_per_mtok":          0.80,
+        "output_per_mtok":         4.00,
+        "cache_read_per_mtok":     0.08,
+        "cache_write_1h_per_mtok": 1.00,   # input × 1.25
+        "cache_write_5m_per_mtok": 0.80,   # same as input
     },
     # Opus 4.6
     "claude-opus-4-6": {
-        "input_per_mtok": 15.00,
-        "output_per_mtok": 75.00,
-        "cache_read_per_mtok": 1.50,
-        "cache_write_per_mtok": 18.75,
+        "input_per_mtok":           15.00,
+        "output_per_mtok":          75.00,
+        "cache_read_per_mtok":       1.50,
+        "cache_write_1h_per_mtok":  18.75,  # input × 1.25
+        "cache_write_5m_per_mtok":  15.00,  # same as input
     },
-    # Fallback for unknown models — use Sonnet pricing
+    # Fallback for unknown models — Sonnet pricing
     "_default": {
-        "input_per_mtok": 3.00,
-        "output_per_mtok": 15.00,
-        "cache_read_per_mtok": 0.30,
-        "cache_write_per_mtok": 3.75,
+        "input_per_mtok":          3.00,
+        "output_per_mtok":        15.00,
+        "cache_read_per_mtok":     0.30,
+        "cache_write_1h_per_mtok": 3.75,
+        "cache_write_5m_per_mtok": 3.00,
     },
 }
 
@@ -115,10 +124,20 @@ def load_config() -> AppConfig:
             from claude_usage_bar.keychain import load_api_key
             cfg.api.anthropic_api_key = load_api_key()
 
-    # Merge user pricing on top of defaults
+    # Merge user pricing on top of defaults.
+    # Migration: if user's config still has the old single `cache_write_per_mtok`
+    # key (pre-TTL-split), promote it to both new keys so the app doesn't crash.
     if pricing := raw.get("pricing"):
-        for model, rates in pricing.items():
-            cfg.pricing[model] = rates
+        for model, user_rates in pricing.items():
+            merged = dict(cfg.pricing.get(model, DEFAULT_PRICING["_default"]))
+            merged.update(user_rates)
+            if ("cache_write_per_mtok" in merged
+                    and "cache_write_1h_per_mtok" not in merged
+                    and "cache_write_5m_per_mtok" not in merged):
+                old_rate = merged.pop("cache_write_per_mtok")
+                merged["cache_write_1h_per_mtok"] = old_rate
+                merged["cache_write_5m_per_mtok"] = merged.get("input_per_mtok", old_rate)
+            cfg.pricing[model] = merged
 
     return cfg
 
@@ -163,13 +182,15 @@ anthropic_api_key = ""
 input_per_mtok = 3.00
 output_per_mtok = 15.00
 cache_read_per_mtok = 0.30
-cache_write_per_mtok = 3.75
+cache_write_1h_per_mtok = 3.75
+cache_write_5m_per_mtok = 3.00
 
 [pricing."claude-haiku-4-5-20251001"]
 input_per_mtok = 0.80
 output_per_mtok = 4.00
 cache_read_per_mtok = 0.08
-cache_write_per_mtok = 1.00
+cache_write_1h_per_mtok = 1.00
+cache_write_5m_per_mtok = 0.80
 """,
         encoding="utf-8",
     )

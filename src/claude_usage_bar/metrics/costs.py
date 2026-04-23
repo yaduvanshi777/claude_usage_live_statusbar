@@ -15,9 +15,10 @@ class CostCalculator:
     def compute(self, model: str, stats: ModelStats) -> float:
         rates = self._config.get_pricing(model)
         cost = (
-            stats.input_tokens * rates["input_per_mtok"] / 1_000_000
-            + stats.output_tokens * rates["output_per_mtok"] / 1_000_000
-            + stats.cache_read_tokens * rates["cache_read_per_mtok"] / 1_000_000
-            + stats.cache_write_tokens * rates["cache_write_per_mtok"] / 1_000_000
+            stats.input_tokens       * rates["input_per_mtok"]          / 1_000_000
+            + stats.output_tokens    * rates["output_per_mtok"]         / 1_000_000
+            + stats.cache_read_tokens * rates["cache_read_per_mtok"]    / 1_000_000
+            + stats.cache_write_1h_tokens * rates["cache_write_1h_per_mtok"] / 1_000_000
+            + stats.cache_write_5m_tokens * rates["cache_write_5m_per_mtok"] / 1_000_000
         )
         return cost

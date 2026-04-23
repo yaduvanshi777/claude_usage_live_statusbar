@@ -17,7 +17,11 @@ class ModelStats:
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
-    cache_write_tokens: int = 0
+    # Cache writes split by TTL tier — Anthropic prices these differently:
+    #   5-minute ephemeral: same rate as input (no premium)
+    #   1-hour extended:    input rate + 25% premium
+    cache_write_1h_tokens: int = 0
+    cache_write_5m_tokens: int = 0
     requests: int = 0
     cost_usd: float = 0.0
 
@@ -25,13 +29,20 @@ class ModelStats:
         self.input_tokens += other.input_tokens
         self.output_tokens += other.output_tokens
         self.cache_read_tokens += other.cache_read_tokens
-        self.cache_write_tokens += other.cache_write_tokens
+        self.cache_write_1h_tokens += other.cache_write_1h_tokens
+        self.cache_write_5m_tokens += other.cache_write_5m_tokens
         self.requests += other.requests
         self.cost_usd += other.cost_usd
 
     @property
+    def cache_write_tokens(self) -> int:
+        """Total cache writes across both TTL tiers."""
+        return self.cache_write_1h_tokens + self.cache_write_5m_tokens
+
+    @property
     def total_tokens(self) -> int:
-        return self.input_tokens + self.output_tokens + self.cache_read_tokens + self.cache_write_tokens
+        return (self.input_tokens + self.output_tokens
+                + self.cache_read_tokens + self.cache_write_tokens)
 
 
 @dataclass
@@ -100,7 +111,8 @@ class TokenAggregator:
             input_tokens=usage.get("input_tokens", 0),
             output_tokens=usage.get("output_tokens", 0),
             cache_read_tokens=usage.get("cache_read_input_tokens", 0),
-            cache_write_tokens=usage.get("cache_creation_input_tokens", 0),
+            cache_write_1h_tokens=_extract_cache_1h(usage),
+            cache_write_5m_tokens=_extract_cache_5m(usage),
             requests=1,
         )
         stats.cost_usd = cost_calculator.compute(model, stats)
@@ -159,6 +171,33 @@ class AggregatorSnapshot:
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
+
+def _extract_cache_1h(usage: dict) -> int:
+    """
+    Extract 1-hour extended cache write tokens.
+
+    Prefers the nested `cache_creation` object introduced in Claude 4.x.
+    Falls back to the flat `cache_creation_input_tokens` total (treating the
+    entire amount as 1-hour) for any older-format entries that lack the nested
+    object — this preserves pre-fix behaviour and avoids undercounting.
+    """
+    cc = usage.get("cache_creation")
+    if isinstance(cc, dict):
+        return cc.get("ephemeral_1h_input_tokens", 0)
+    return usage.get("cache_creation_input_tokens", 0)
+
+
+def _extract_cache_5m(usage: dict) -> int:
+    """
+    Extract 5-minute ephemeral cache write tokens.
+
+    Returns 0 if the nested `cache_creation` object is absent (old format).
+    """
+    cc = usage.get("cache_creation")
+    if isinstance(cc, dict):
+        return cc.get("ephemeral_5m_input_tokens", 0)
+    return 0
+
 
 def _parse_date(ts: str) -> date:
     """Parse ISO 8601 timestamp to local date. Falls back to today on parse error."""
