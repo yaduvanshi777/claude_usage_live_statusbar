@@ -310,16 +310,22 @@ class MenuBarRenderer(rumps.App):
     # Gauge icon
     # ------------------------------------------------------------------
 
-    _DEFAULT_DAILY_REF = 30.0   # $ reference when no budget_daily_usd configured
+    _DEFAULT_DAILY_REF = 50.0   # $ soft-scale when no budget_daily_usd configured
 
     def _update_gauge_icon(self, cost_usd: float, cfg: AppConfig) -> None:
-        budget = cfg.display.budget_daily_usd
-        ref    = budget if budget > 0 else self._DEFAULT_DAILY_REF
-        fill_pct = cost_usd / ref
+        budget        = cfg.display.budget_daily_usd
+        budget_active = budget > 0
+        ref           = budget if budget_active else self._DEFAULT_DAILY_REF
+        fill_pct      = cost_usd / ref
         try:
             from claude_usage_bar.renderer.gauge_icon import render_gauge, GaugeState
-            path, state = render_gauge(fill_pct)
-            self.template = (state == GaugeState.NORMAL)
+            path, state = render_gauge(fill_pct, budget_active=budget_active)
+            # Only switch template mode when budget is active and state requires it.
+            # Toggling template on every tick causes a visual duplicate-icon artefact
+            # in rumps — set it once and keep it stable.
+            want_template = (state == GaugeState.NORMAL)
+            if self.template != want_template:
+                self.template = want_template
             self.icon = path
         except Exception as e:
             logger.debug("Gauge icon render failed: %s", e)

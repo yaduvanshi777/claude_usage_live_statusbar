@@ -52,28 +52,34 @@ _tick = 0   # module-level alternator
 
 class GaugeState(Enum):
     NORMAL = "normal"   # white template image
-    AMBER  = "amber"    # orange, non-template
-    RED    = "red"      # red,    non-template
+    AMBER  = "amber"    # orange, non-template (only when budget explicitly set)
+    RED    = "red"      # red,    non-template (only when budget explicitly set)
 
 
-def gauge_state_for(fill_pct: float) -> GaugeState:
-    if fill_pct >= 1.0:
-        return GaugeState.RED
-    if fill_pct >= 0.8:
-        return GaugeState.AMBER
+def gauge_state_for(fill_pct: float, budget_active: bool) -> GaugeState:
+    """
+    AMBER/RED only when the user has set budget_daily_usd > 0.
+    Without an explicit budget the gauge stays white — purely informational.
+    """
+    if budget_active:
+        if fill_pct >= 1.0:
+            return GaugeState.RED
+        if fill_pct >= 0.8:
+            return GaugeState.AMBER
     return GaugeState.NORMAL
 
 
-def render_gauge(fill_pct: float) -> tuple[str, GaugeState]:
+def render_gauge(fill_pct: float, budget_active: bool = False) -> tuple[str, GaugeState]:
     """
     Draw a 44×44 gauge PNG and return (path, GaugeState).
 
     fill_pct: 0.0 = empty, 1.0 = full budget / reference.
+    budget_active: True only when user has set budget_daily_usd > 0.
     Caller uses the returned state to set template=True/False on the rumps app.
     """
     global _tick
 
-    state    = gauge_state_for(fill_pct)
+    state    = gauge_state_for(fill_pct, budget_active)
     draw_pct = max(0.0, min(1.0, fill_pct))
 
     # Colour palette per state
