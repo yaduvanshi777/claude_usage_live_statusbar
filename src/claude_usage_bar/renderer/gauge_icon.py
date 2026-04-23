@@ -8,39 +8,45 @@ Same visual language as packaging/assets/make_icns.py:
   - PIL convention: 0°=east, angles increase clockwise in screen space;
     end < start → PIL draws the longer 270° path through the top.
 
-Colour states (driven by fill_pct):
+Colour states (driven by fill_pct, only when budget_active=True):
   NORMAL (< 80%)  — white on transparent, set as macOS template image
-  AMBER  (80–99%) — orange #FF9500, non-template (forces visible colour)
+  AMBER  (80–99%) — orange #FF9500, non-template
   RED    (≥ 100%) — red   #FF3B30, non-template
 
-Two alternating temp-file paths are used so rumps always detects a
-change in the icon path and reloads the PNG from disk every tick.
+Live-motion element: a bright accent dot orbits the gauge track once
+every _ORBIT_SECONDS seconds.  It moves ~12° per 2-second tick, which is
+clearly visible at 44px and makes the icon unmistakably animated even
+when the fill level barely changes.
+
+Two alternating temp-file paths force rumps to reload the PNG every tick.
 """
 
 from __future__ import annotations
 
-import io
 import math
 import tempfile
+import time
 from enum import Enum
 from pathlib import Path
 
 from PIL import Image, ImageDraw
 
 # ── Geometry (matches make_icns.py) ──────────────────────────────────────────
-_SIZE        = 44          # 22 pt @2× Retina
-_CX          = _SIZE / 2
-_CY          = _SIZE / 2
-_PAD         = _SIZE * 0.09
-_R           = _SIZE / 2 - _PAD
-_GAUGE_R     = _R * 0.76
-_GAUGE_START = 135
-_GAUGE_END   = 45
-_GAUGE_SPAN  = 270
-_TRACK_W     = max(1, round(_SIZE * 0.045))
-_FILL_W      = max(2, round(_SIZE * 0.095))
-_CAP_R       = max(1, round(_SIZE * 0.075))
-_DOT_R       = max(1, round(_R * 0.22))
+_SIZE         = 44          # 22 pt @2× Retina
+_CX           = _SIZE / 2
+_CY           = _SIZE / 2
+_PAD          = _SIZE * 0.09
+_R            = _SIZE / 2 - _PAD
+_GAUGE_R      = _R * 0.76
+_GAUGE_START  = 135
+_GAUGE_END    = 45
+_GAUGE_SPAN   = 270
+_TRACK_W      = max(1, round(_SIZE * 0.045))
+_FILL_W       = max(2, round(_SIZE * 0.095))
+_CAP_R        = max(1, round(_SIZE * 0.075))
+_DOT_R        = max(1, round(_R * 0.22))
+_ORBIT_R      = max(1, round(_SIZE * 0.060))  # radius of the orbiting dot
+_ORBIT_SECONDS = 30.0                          # one full orbit every 30 s
 
 # ── Alternating temp-file paths (forces rumps to reload on each tick) ─────────
 _TMP = [
@@ -119,6 +125,18 @@ def render_gauge(fill_pct: float, budget_active: bool = False) -> tuple[str, Gau
             [ex - _CAP_R, ey - _CAP_R, ex + _CAP_R, ey + _CAP_R],
             fill=fg,
         )
+
+    # ── Orbiting accent dot — makes the icon visibly live on every tick ────────
+    # Orbits the full 270° track once per _ORBIT_SECONDS; moves ~12°/tick at 2s.
+    orbit_frac = (time.time() % _ORBIT_SECONDS) / _ORBIT_SECONDS
+    orbit_deg  = (_GAUGE_START + _GAUGE_SPAN * orbit_frac) % 360
+    ox, oy     = polar(_GAUGE_R, orbit_deg)
+    # Slightly smaller and brighter than the fill end-cap
+    orbit_color = (fg[0], fg[1], fg[2], 200)
+    draw.ellipse(
+        [ox - _ORBIT_R, oy - _ORBIT_R, ox + _ORBIT_R, oy + _ORBIT_R],
+        fill=orbit_color,
+    )
 
     # ── Centre dot ────────────────────────────────────────────────────────────
     draw.ellipse(
