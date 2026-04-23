@@ -122,7 +122,6 @@ class MenuBarRenderer(rumps.App):
             quit_button=None,
         )
         self._app = app
-        self._gauge_state = None          # last GaugeState, to avoid redundant icon swaps
         self._alert_fired_80 = False
         self._alert_fired_100 = False
         self._alert_reset_date: date | None = None
@@ -311,22 +310,17 @@ class MenuBarRenderer(rumps.App):
     # Gauge icon
     # ------------------------------------------------------------------
 
+    _DEFAULT_DAILY_REF = 30.0   # $ reference when no budget_daily_usd configured
+
     def _update_gauge_icon(self, cost_usd: float, cfg: AppConfig) -> None:
         budget = cfg.display.budget_daily_usd
-        if budget <= 0:
-            return  # no budget → keep static menubar.png
-
-        fill_pct = cost_usd / budget
+        ref    = budget if budget > 0 else self._DEFAULT_DAILY_REF
+        fill_pct = cost_usd / ref
         try:
-            from claude_usage_bar.renderer.gauge_icon import render_gauge_nsimage, GaugeState
-            nsimage, state = render_gauge_nsimage(fill_pct)
-            if nsimage is None:
-                return
-            if state == self._gauge_state:
-                return  # colour state unchanged, but icon content still updates
-            self._gauge_state = state
+            from claude_usage_bar.renderer.gauge_icon import render_gauge, GaugeState
+            path, state = render_gauge(fill_pct)
             self.template = (state == GaugeState.NORMAL)
-            self.icon = nsimage
+            self.icon = path
         except Exception as e:
             logger.debug("Gauge icon render failed: %s", e)
 

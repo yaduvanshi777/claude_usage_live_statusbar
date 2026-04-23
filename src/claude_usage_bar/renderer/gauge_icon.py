@@ -1,45 +1,62 @@
-"""Dynamic gauge icon rendered in-memory for the macOS menu bar.
+"""Dynamic gauge icon — Pillow-based, writes to temp PNG on every tick.
 
-Draws a circular arc gauge using Core Graphics (via ctypes) — no temp files,
-no Pillow dependency at runtime, no disk I/O on every tick.
+Same visual language as packaging/assets/make_icns.py:
+  - 270° arc, gap at bottom
+  - GAUGE_START=135° (lower-left, 7:30 o'clock)
+  - GAUGE_END=45°   (lower-right, 4:30 o'clock)
+  - fill_end = (GAUGE_START + GAUGE_SPAN * fill_pct) % 360
+  - PIL convention: 0°=east, angles increase clockwise in screen space;
+    end < start → PIL draws the longer 270° path through the top.
 
-Arc geometry (matches make_icns.py):
-    Start: 135° (south-west)   End: 45° (south-east)   Span: 270°
-    0% fill → empty arc        100% fill → full arc
+Colour states (driven by fill_pct):
+  NORMAL (< 80%)  — white on transparent, set as macOS template image
+  AMBER  (80–99%) — orange #FF9500, non-template (forces visible colour)
+  RED    (≥ 100%) — red   #FF3B30, non-template
 
-Colour states:
-    NORMAL  (0–79%)  — white template image, macOS adapts to light/dark
-    AMBER   (80–99%) — orange  #FF9500, non-template (forces colour)
-    RED     (≥100%)  — red     #FF3B30, non-template
-
-The returned NSImage has pixel size 44×44 (22 pt @ 2×) to match the
-standard macOS menu bar icon slot.
+Two alternating temp-file paths are used so rumps always detects a
+change in the icon path and reloads the PNG from disk every tick.
 """
 
 from __future__ import annotations
 
-import ctypes
-import ctypes.util
+import io
 import math
+import tempfile
 from enum import Enum
+from pathlib import Path
 
-# ── Gauge geometry ────────────────────────────────────────────────────────────
-_SIZE        = 44      # pixels (22 pt @ 2× Retina)
-_STROKE      = 4.5     # arc stroke width
-_RADIUS      = 16.0    # arc centre-radius
+from PIL import Image, ImageDraw
+
+# ── Geometry (matches make_icns.py) ──────────────────────────────────────────
+_SIZE        = 44          # 22 pt @2× Retina
 _CX          = _SIZE / 2
 _CY          = _SIZE / 2
-_START_DEG   = 135.0   # start angle (south-west), measured from +X axis CCW
-_SPAN_DEG    = 270.0   # total arc span
+_PAD         = _SIZE * 0.09
+_R           = _SIZE / 2 - _PAD
+_GAUGE_R     = _R * 0.76
+_GAUGE_START = 135
+_GAUGE_END   = 45
+_GAUGE_SPAN  = 270
+_TRACK_W     = max(1, round(_SIZE * 0.045))
+_FILL_W      = max(2, round(_SIZE * 0.095))
+_CAP_R       = max(1, round(_SIZE * 0.075))
+_DOT_R       = max(1, round(_R * 0.22))
+
+# ── Alternating temp-file paths (forces rumps to reload on each tick) ─────────
+_TMP = [
+    Path(tempfile.gettempdir()) / "claude-usage-bar-gauge-0.png",
+    Path(tempfile.gettempdir()) / "claude-usage-bar-gauge-1.png",
+]
+_tick = 0   # module-level alternator
 
 
 class GaugeState(Enum):
-    NORMAL = "normal"   # white template
+    NORMAL = "normal"   # white template image
     AMBER  = "amber"    # orange, non-template
-    RED    = "red"      # red, non-template
+    RED    = "red"      # red,    non-template
 
 
-def _pct_to_state(fill_pct: float) -> GaugeState:
+def gauge_state_for(fill_pct: float) -> GaugeState:
     if fill_pct >= 1.0:
         return GaugeState.RED
     if fill_pct >= 0.8:
@@ -47,169 +64,64 @@ def _pct_to_state(fill_pct: float) -> GaugeState:
     return GaugeState.NORMAL
 
 
-# ── Lazy-loaded ObjC bridge ───────────────────────────────────────────────────
-_objc: ctypes.CDLL | None = None
-_cg:   ctypes.CDLL | None = None
-
-
-def _load_libs() -> tuple[ctypes.CDLL, ctypes.CDLL]:
-    global _objc, _cg
-    if _objc is None:
-        _objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
-        _objc.objc_getClass.restype = ctypes.c_void_p
-        _objc.sel_registerName.restype = ctypes.c_void_p
-        _objc.objc_msgSend.restype = ctypes.c_void_p
-        _objc.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-    if _cg is None:
-        _cg = ctypes.cdll.LoadLibrary(ctypes.util.find_library("CoreGraphics"))
-    return _objc, _cg
-
-
-def _sel(name: str) -> ctypes.c_void_p:
-    objc, _ = _load_libs()
-    return objc.sel_registerName(name.encode())
-
-
-def _cls(name: str) -> ctypes.c_void_p:
-    objc, _ = _load_libs()
-    return objc.objc_getClass(name.encode())
-
-
-def _msg(receiver, selector, *args):
-    objc, _ = _load_libs()
-    # Build the variadic call: each extra arg can be void_p or double
-    argtypes = [ctypes.c_void_p, ctypes.c_void_p] + [
-        ctypes.c_double if isinstance(a, float) else ctypes.c_void_p for a in args
-    ]
-    objc.objc_msgSend.argtypes = argtypes
-    return objc.objc_msgSend(receiver, selector, *args)
-
-
-# ── Public API ────────────────────────────────────────────────────────────────
-
-def render_gauge_nsimage(fill_pct: float) -> tuple[object, GaugeState]:
+def render_gauge(fill_pct: float) -> tuple[str, GaugeState]:
     """
-    Render a 44×44 gauge arc into an NSImage and return (nsimage_ptr, GaugeState).
+    Draw a 44×44 gauge PNG and return (path, GaugeState).
 
-    Caller (macos.py) sets rumps app.icon = nsimage_ptr and app.template
-    based on the returned state.
+    fill_pct: 0.0 = empty, 1.0 = full budget / reference.
+    Caller uses the returned state to set template=True/False on the rumps app.
     """
-    state = _pct_to_state(fill_pct)
-    fill_pct = max(0.0, min(1.0, fill_pct))
+    global _tick
 
-    try:
-        return _render_cg(fill_pct, state), state
-    except Exception:
-        # Graceful fallback — return None so caller keeps the existing icon
-        return None, state
+    state    = gauge_state_for(fill_pct)
+    draw_pct = max(0.0, min(1.0, fill_pct))
 
-
-def _render_cg(fill_pct: float, state: GaugeState) -> object:
-    """Draw using Core Graphics + NSImage."""
-    objc, cg = _load_libs()
-
-    size_struct = (ctypes.c_double * 2)(_SIZE, _SIZE)
-
-    # NSImage alloc/initWithSize:
-    NSImage = _cls("NSImage")
-    img = _msg(NSImage, _sel("alloc"))
-
-    # initWithSize: takes NSSize (two doubles)
-    objc.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p,
-                                   ctypes.c_double, ctypes.c_double]
-    objc.objc_msgSend.restype = ctypes.c_void_p
-    img = objc.objc_msgSend(img, _sel("initWithSize:"), ctypes.c_double(_SIZE), ctypes.c_double(_SIZE))
-
-    # lockFocus / unlockFocus
-    objc.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-    objc.objc_msgSend.restype = ctypes.c_void_p
-    _msg(img, _sel("lockFocus"))
-
-    # Get current CGContext
-    NSGraphicsContext = _cls("NSGraphicsContext")
-    objc.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-    objc.objc_msgSend.restype = ctypes.c_void_p
-    gctx = objc.objc_msgSend(NSGraphicsContext, _sel("currentContext"))
-
-    # CGContext from NSGraphicsContext
-    objc.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-    objc.objc_msgSend.restype = ctypes.c_void_p
-    cgctx = objc.objc_msgSend(gctx, _sel("CGContext"))
-
-    _draw_gauge(cg, cgctx, fill_pct, state)
-
-    objc.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-    objc.objc_msgSend.restype = ctypes.c_void_p
-    _msg(img, _sel("unlockFocus"))
-
-    return img
-
-
-def _draw_gauge(cg, ctx, fill_pct: float, state: GaugeState) -> None:
-    """Draw background track + filled arc into ctx."""
-    # Colours
-    if state == GaugeState.NORMAL:
-        fg = (1.0, 1.0, 1.0, 1.0)    # white (template)
-        track = (1.0, 1.0, 1.0, 0.25)
+    # Colour palette per state
+    if state == GaugeState.RED:
+        fg    = (255,  59,  48, 255)   # #FF3B30
+        track = (255,  59,  48,  50)
     elif state == GaugeState.AMBER:
-        fg = (1.0, 0.584, 0.0, 1.0)  # #FF9500 orange
-        track = (1.0, 0.584, 0.0, 0.25)
+        fg    = (255, 149,   0, 255)   # #FF9500
+        track = (255, 149,   0,  50)
     else:
-        fg = (1.0, 0.231, 0.188, 1.0) # #FF3B30 red
-        track = (1.0, 0.231, 0.188, 0.25)
+        fg    = (255, 255, 255, 255)   # white (template)
+        track = (255, 255, 255,  40)
 
-    # CGContextSetLineWidth
-    cg.CGContextSetLineWidth(ctx, ctypes.c_double(_STROKE))
-    cg.CGContextSetLineCap(ctx, ctypes.c_int(1))  # kCGLineCapRound
+    img  = Image.new("RGBA", (_SIZE, _SIZE), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
 
-    # Track arc (full 270°)
-    _set_stroke_color(cg, ctx, *track)
-    _add_arc(cg, ctx, _CX, _CY, _RADIUS, _START_DEG, _START_DEG - _SPAN_DEG, clockwise=True)
-    cg.CGContextStrokePath(ctx)
+    def bbox(r: float) -> list[float]:
+        return [_CX - r, _CY - r, _CX + r, _CY + r]
 
-    # Fill arc
-    if fill_pct > 0.005:
-        fill_deg = _SPAN_DEG * fill_pct
-        _set_stroke_color(cg, ctx, *fg)
-        _add_arc(cg, ctx, _CX, _CY, _RADIUS, _START_DEG, _START_DEG - fill_deg, clockwise=True)
-        cg.CGContextStrokePath(ctx)
+    def polar(r: float, deg: float) -> tuple[float, float]:
+        rad = math.radians(deg)
+        return _CX + r * math.cos(rad), _CY + r * math.sin(rad)
 
-    # Centre dot
-    _set_fill_color(cg, ctx, *fg)
-    dot_r = 2.5
-    cg.CGContextFillEllipseInRect(
-        ctx,
-        ctypes.c_double(_CX - dot_r), ctypes.c_double(_CY - dot_r),
-        ctypes.c_double(dot_r * 2), ctypes.c_double(dot_r * 2),
+    # ── Background track (full 270° arc) ──────────────────────────────────────
+    draw.arc(bbox(_GAUGE_R), start=_GAUGE_START, end=_GAUGE_END,
+             fill=track, width=_TRACK_W)
+
+    # ── Filled arc ────────────────────────────────────────────────────────────
+    if draw_pct > 0.005:
+        fill_end = (_GAUGE_START + _GAUGE_SPAN * draw_pct) % 360
+        draw.arc(bbox(_GAUGE_R), start=_GAUGE_START, end=fill_end,
+                 fill=fg, width=_FILL_W)
+
+        # End-cap dot at fill tip
+        ex, ey = polar(_GAUGE_R, fill_end)
+        draw.ellipse(
+            [ex - _CAP_R, ey - _CAP_R, ex + _CAP_R, ey + _CAP_R],
+            fill=fg,
+        )
+
+    # ── Centre dot ────────────────────────────────────────────────────────────
+    draw.ellipse(
+        [_CX - _DOT_R, _CY - _DOT_R, _CX + _DOT_R, _CY + _DOT_R],
+        fill=fg,
     )
 
-
-def _set_stroke_color(cg, ctx, r, g, b, a):
-    cg.CGContextSetRGBStrokeColor(
-        ctx,
-        ctypes.c_double(r), ctypes.c_double(g),
-        ctypes.c_double(b), ctypes.c_double(a),
-    )
-
-
-def _set_fill_color(cg, ctx, r, g, b, a):
-    cg.CGContextSetRGBFillColor(
-        ctx,
-        ctypes.c_double(r), ctypes.c_double(g),
-        ctypes.c_double(b), ctypes.c_double(a),
-    )
-
-
-def _deg_to_rad(deg: float) -> float:
-    return deg * math.pi / 180.0
-
-
-def _add_arc(cg, ctx, cx, cy, r, start_deg, end_deg, *, clockwise: bool) -> None:
-    cg.CGContextAddArc(
-        ctx,
-        ctypes.c_double(cx), ctypes.c_double(cy),
-        ctypes.c_double(r),
-        ctypes.c_double(_deg_to_rad(start_deg)),
-        ctypes.c_double(_deg_to_rad(end_deg)),
-        ctypes.c_int(1 if clockwise else 0),
-    )
+    # ── Write to alternating temp file ────────────────────────────────────────
+    path = _TMP[_tick % 2]
+    _tick += 1
+    img.save(str(path), "PNG")
+    return str(path), state
