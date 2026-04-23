@@ -50,6 +50,7 @@ class DayStats:
     """Aggregated stats for a single calendar day (local time)."""
     date: date
     by_model: dict[str, ModelStats] = field(default_factory=lambda: defaultdict(ModelStats))
+    by_project: dict[str, ModelStats] = field(default_factory=lambda: defaultdict(ModelStats))
 
     @property
     def totals(self) -> ModelStats:
@@ -84,7 +85,7 @@ class TokenAggregator:
     # Ingestion
     # ------------------------------------------------------------------
 
-    def ingest_entry(self, entry: dict, cost_calculator) -> None:
+    def ingest_entry(self, entry: dict, cost_calculator, project_name: str = "") -> None:
         """
         Process one parsed JSONL line.
 
@@ -125,6 +126,10 @@ class TokenAggregator:
             if model not in day.by_model:
                 day.by_model[model] = ModelStats()
             day.by_model[model].add(stats)
+            if project_name:
+                if project_name not in day.by_project:
+                    day.by_project[project_name] = ModelStats()
+                day.by_project[project_name].add(stats)
 
     def set_active_sessions(self, count: int) -> None:
         with self._lock:
@@ -140,20 +145,23 @@ class TokenAggregator:
             today = date.today()
             today_stats = self._days.get(today, DayStats(date=today))
 
-            # Week: last 7 days including today
             week_combined = ModelStats()
             month_combined = ModelStats()
+            week_by_day: dict[date, float] = {}
             for d, ds in self._days.items():
                 delta = (today - d).days
                 if delta < 7:
                     week_combined.add(ds.totals)
+                    week_by_day[d] = ds.totals.cost_usd
                 if d.year == today.year and d.month == today.month:
                     month_combined.add(ds.totals)
 
             return AggregatorSnapshot(
                 today=today_stats.totals,
                 today_by_model=dict(today_stats.by_model),
+                today_by_project=dict(today_stats.by_project),
                 week=week_combined,
+                week_by_day=week_by_day,
                 month=month_combined,
                 active_sessions=self._active_sessions,
             )
@@ -163,7 +171,9 @@ class TokenAggregator:
 class AggregatorSnapshot:
     today: ModelStats
     today_by_model: dict[str, ModelStats]
+    today_by_project: dict[str, ModelStats]
     week: ModelStats
+    week_by_day: dict[date, float]   # date → cost_usd for last 7 days
     month: ModelStats
     active_sessions: int
 

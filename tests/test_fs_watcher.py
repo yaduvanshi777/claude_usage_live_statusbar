@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -26,11 +27,15 @@ def _write_jsonl(path: Path, entries: list[dict]) -> None:
     path.write_text("\n".join(json.dumps(e) for e in entries) + "\n", encoding="utf-8")
 
 
+def _today_ts() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _assistant_entry(uuid: str = "u1", input_tokens: int = 100) -> dict:
     return {
         "type": "assistant",
         "uuid": uuid,
-        "timestamp": "2026-04-02T10:00:00Z",
+        "timestamp": _today_ts(),
         "message": {
             "model": "claude-sonnet-4-6",
             "role": "assistant",

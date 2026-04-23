@@ -22,3 +22,12 @@ class CostCalculator:
             + stats.cache_write_5m_tokens * rates["cache_write_5m_per_mtok"] / 1_000_000
         )
         return cost
+
+    def compute_savings(self, model: str, stats: ModelStats) -> float:
+        """
+        Estimate dollars saved by cache reads vs re-sending those tokens as input.
+        savings = cache_read_tokens × (input_rate - cache_read_rate) / 1M
+        """
+        rates = self._config.get_pricing(model)
+        saved_per_tok = (rates["input_per_mtok"] - rates["cache_read_per_mtok"]) / 1_000_000
+        return stats.cache_read_tokens * saved_per_tok

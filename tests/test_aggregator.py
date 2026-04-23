@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from datetime import date, timezone
+from datetime import date, datetime, timezone
 from unittest.mock import MagicMock
 
 from claude_usage_bar.metrics.aggregator import TokenAggregator, ModelStats
@@ -15,15 +15,21 @@ def _make_cost_calc(cost: float = 0.01):
     return calc
 
 
+def _today_ts() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _assistant_entry(
     uuid: str = "uuid-1",
     model: str = "claude-sonnet-4-6",
-    timestamp: str = "2026-04-02T10:00:00Z",
+    timestamp: str | None = None,
     input_tokens: int = 100,
     output_tokens: int = 50,
     cache_read: int = 200,
     cache_write: int = 300,
 ) -> dict:
+    if timestamp is None:
+        timestamp = _today_ts()
     return {
         "type": "assistant",
         "uuid": uuid,
@@ -115,6 +121,7 @@ class TestTokenAggregator:
 
     def test_total_tokens_property(self):
         ms = ModelStats(
-            input_tokens=100, output_tokens=50, cache_read_tokens=200, cache_write_tokens=300
+            input_tokens=100, output_tokens=50, cache_read_tokens=200,
+            cache_write_1h_tokens=200, cache_write_5m_tokens=100,
         )
         assert ms.total_tokens == 650

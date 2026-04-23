@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import date, datetime
 from typing import TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,20 @@ def _fmt_tokens(n: int) -> str:
 
 def _fmt_cost(usd: float) -> str:
     return f"${usd:.2f}"
+
+
+def _compute_burn_rate_label(cost_usd: float, cfg) -> str:
+    now = datetime.now()
+    elapsed_minutes = now.hour * 60 + now.minute
+    if elapsed_minutes < cfg.display.min_burn_rate_minutes:
+        return "Burn rate: (collecting data…)"
+    hourly = cost_usd / (elapsed_minutes / 60.0)
+    daily = cost_usd / (elapsed_minutes / (60.0 * 24))
+    label = f"Burn rate: {_fmt_cost(hourly)}/hr → {_fmt_cost(daily)}/day"
+    if cfg.display.budget_daily_usd > 0:
+        pct = (daily / cfg.display.budget_daily_usd) * 100
+        label += f"  ({pct:.0f}% of budget)"
+    return label
 
 
 def _make_icon_image(color: str = "#4A90D9") -> "Image.Image":
@@ -145,6 +160,21 @@ class SystemTrayRenderer:
             f"Active:    {snap.active_sessions} session{'s' if snap.active_sessions != 1 else ''}",
             None, enabled=False,
         ))
+
+        # Cache savings
+        calc = self._app.get_cost_calculator()
+        savings = sum(
+            calc.compute_savings(model, ms)
+            for model, ms in snap.today_by_model.items()
+        )
+        items.append(pystray.MenuItem(
+            f"Cache saved: {_fmt_cost(savings)}", None, enabled=False
+        ))
+
+        # Burn rate
+        items.append(pystray.MenuItem(
+            _compute_burn_rate_label(today.cost_usd, cfg), None, enabled=False
+        ))
         items.append(pystray.Menu.SEPARATOR)
 
         # ── Week / Month ────────────────────────────────────────────
@@ -158,6 +188,20 @@ class SystemTrayRenderer:
             f"This month: {_fmt_tokens(m.total_tokens)} tok  {_fmt_cost(m.cost_usd)}",
             None, enabled=False,
         ))
+        items.append(pystray.Menu.SEPARATOR)
+
+        # ── By Project ──────────────────────────────────────────────
+        items.append(pystray.MenuItem("── By Project (today) ──", None, enabled=False))
+        sorted_projects = sorted(
+            snap.today_by_project.items(),
+            key=lambda kv: kv[1].cost_usd,
+            reverse=True,
+        )
+        for proj_name, ms in sorted_projects[:5]:
+            items.append(pystray.MenuItem(
+                f"  {proj_name[:28]:<28} {_fmt_cost(ms.cost_usd)} | {_fmt_tokens(ms.total_tokens)} tok",
+                None, enabled=False,
+            ))
         items.append(pystray.Menu.SEPARATOR)
 
         # ── By Model ────────────────────────────────────────────────

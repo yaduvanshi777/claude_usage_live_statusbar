@@ -91,6 +91,10 @@ class UsageBarApp:
         """Called from the UI timer thread — must return quickly."""
         return self._aggregator.snapshot()
 
+    def get_cost_calculator(self) -> CostCalculator:
+        with self._config_lock:
+            return self._cost_calculator
+
     def get_rate_limits(self) -> RateLimitStats | None:
         with self._config_lock:
             has_key = bool(self.config.api.anthropic_api_key)

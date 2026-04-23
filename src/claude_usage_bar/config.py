@@ -64,6 +64,8 @@ class DisplayConfig:
     format: Literal["cost", "tokens", "both"] = "both"
     show_rate_limits: bool = True
     refresh_interval_seconds: int = 2
+    budget_daily_usd: float = 0.0          # 0 = disabled; enables budget alerts + burn projection
+    min_burn_rate_minutes: int = 30        # suppress burn projection before this many minutes of data
 
 
 @dataclass
@@ -108,6 +110,8 @@ def load_config() -> AppConfig:
         cfg.display.refresh_interval_seconds = display.get(
             "refresh_interval_seconds", cfg.display.refresh_interval_seconds
         )
+        cfg.display.budget_daily_usd = float(display.get("budget_daily_usd", cfg.display.budget_daily_usd))
+        cfg.display.min_burn_rate_minutes = int(display.get("min_burn_rate_minutes", cfg.display.min_burn_rate_minutes))
 
     if api := raw.get("api"):
         plaintext_key = api.get("anthropic_api_key", "")
@@ -173,6 +177,8 @@ def write_default_config() -> None:
 format = "both"
 show_rate_limits = true
 refresh_interval_seconds = 2
+# budget_daily_usd = 30.0        # optional: enables budget alerts + burn projection
+# min_burn_rate_minutes = 30     # suppress projection until this many minutes of data
 
 [api]
 # Optional — enables rate-limit header enrichment

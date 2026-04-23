@@ -82,7 +82,7 @@ class _JSOLHandler(FileSystemEventHandler):
                 entry = json.loads(raw_line)
             except json.JSONDecodeError:
                 continue
-            self._aggregator.ingest_entry(entry, self._cost_calculator)
+            self._aggregator.ingest_entry(entry, self._cost_calculator, project_name=path.parent.name)
 
     def initial_scan(self) -> None:
         """Process all existing JSONL files on startup."""
